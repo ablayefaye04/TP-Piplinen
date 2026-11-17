@@ -1,51 +1,70 @@
-// Pipeline declaratif Jenkins : meme chaine que GitHub Actions (build -> test -> deploy)
+
 pipeline {
     agent any
 
     tools {
-        // Nom de l'installation Maven declaree dans Manage Jenkins > Tools
+        // Doit correspondre exactement au nom configuré dans Jenkins
         maven 'Maven3'
     }
 
     options {
-        timeout(time: 15, unit: 'MINUTES')
+        timeout(time: 2, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
     }
 
     triggers {
-        // Verifie le depot Git toutes les ~2 minutes (alternative simple au webhook)
         pollSCM('H/2 * * * *')
     }
 
     stages {
-        stage('Build') {
+
+        stage('Checkout') {
             steps {
-                sh 'mvn -B clean package -DskipTests'
+                checkout scm
             }
         }
 
-        stage('Test') {
+        stage('Environment') {
             steps {
-                sh 'mvn -B verify'
+                sh 'java -version'
+                sh 'mvn -version'
+            }
+        }
+
+        stage('Build & Tests') {
+            steps {
+                echo 'Compilation et execution des tests Maven...'
+                sh 'mvn -B -ntp clean verify'
             }
             post {
                 always {
-                    junit 'target/surefire-reports/*.xml'
-                    archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
+                    junit testResults: 'target/surefire-reports/*.xml',
+                          allowEmptyResults: false
+
+                    archiveArtifacts(
+                        artifacts: 'target/site/jacoco/**',
+                        allowEmptyArchive: true
+                    )
                 }
             }
         }
 
         stage('Archive') {
             steps {
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                archiveArtifacts(
+                    artifacts: 'target/*.jar',
+                    fingerprint: true
+                )
             }
         }
 
         stage('Deploy') {
-            // "branch 'main'" ne marche qu'en pipeline multibranch ; ici on teste la variable Git
             when {
-                expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' }
+                expression {
+                    return env.GIT_BRANCH == 'origin/main' ||
+                           env.BRANCH_NAME == 'main'
+                }
             }
             steps {
                 sh 'chmod +x deploy.sh && ./deploy.sh'
@@ -54,7 +73,16 @@ pipeline {
     }
 
     post {
-        success { echo 'Pipeline OK : build, tests et deploiement reussis' }
-        failure { echo 'Pipeline en echec : voir la Console Output' }
+        success {
+            echo 'Pipeline OK : build, tests et deploiement reussis'
+        }
+
+        failure {
+            echo 'Pipeline en echec : consultez la Console Output'
+        }
+
+        always {
+            echo 'Execution du pipeline terminee.'
+        }
     }
 }
